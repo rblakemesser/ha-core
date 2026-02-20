@@ -20,7 +20,7 @@ from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, MANUFACTURER, TIMEOUT_SECONDS
+from .const import DOMAIN, MANUFACTURER, SCHEDULE_TIMEOUT_SECONDS, TIMEOUT_SECONDS
 from .types import RainbirdConfigEntry
 
 UPDATE_INTERVAL = datetime.timedelta(minutes=1)
@@ -51,7 +51,8 @@ class RainbirdDeviceState:
 def async_create_clientsession() -> aiohttp.ClientSession:
     """Create a rainbird async_create_clientsession with a connection limit."""
     return aiohttp.ClientSession(
-        connector=aiohttp.TCPConnector(limit=CONECTION_LIMIT),
+        # Rain Bird controllers often use a self-signed certificate for HTTPS.
+        connector=aiohttp.TCPConnector(limit=CONECTION_LIMIT, ssl=False),
     )
 
 
@@ -164,7 +165,7 @@ class RainbirdScheduleUpdateCoordinator(DataUpdateCoordinator[Schedule]):
     async def _async_update_data(self) -> Schedule:
         """Fetch data from Rain Bird device."""
         try:
-            async with asyncio.timeout(TIMEOUT_SECONDS):
+            async with asyncio.timeout(SCHEDULE_TIMEOUT_SECONDS):
                 return await self._controller.get_schedule()
         except RainbirdApiException as err:
             raise UpdateFailed(f"Error communicating with Device: {err}") from err

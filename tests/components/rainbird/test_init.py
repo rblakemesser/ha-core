@@ -123,7 +123,7 @@ async def test_fix_unique_id(
 ) -> None:
     """Test fix of a config entry with no unique id."""
 
-    responses.insert(0, mock_json_response(WIFI_PARAMS_RESPONSE))
+    responses.insert(1, mock_json_response(WIFI_PARAMS_RESPONSE))
 
     entries = hass.config_entries.async_entries(DOMAIN)
     assert len(entries) == 1
@@ -181,7 +181,7 @@ async def test_fix_unique_id_failure(
 ) -> None:
     """Test a failure during fix of a config entry with no unique id."""
 
-    responses.insert(0, initial_response)
+    responses.insert(1, initial_response)
 
     await hass.config_entries.async_setup(config_entry.entry_id)
     # Config entry is loaded, but not updated
@@ -212,11 +212,16 @@ async def test_fix_unique_id_duplicate(
     )
     other_entry.add_to_hass(hass)
 
-    # Responses for the second config entry. This first fetches wifi params
-    # to repair the unique id.
+    # Responses for the second config entry. This first fetches model/version,
+    # then wifi params to repair the unique id.
     responses_copy = [*responses]
-    responses.append(mock_json_response(WIFI_PARAMS_RESPONSE))
-    responses.extend(responses_copy)
+    responses.extend(
+        [
+            responses_copy[0],
+            mock_json_response(WIFI_PARAMS_RESPONSE),
+            *responses_copy[1:],
+        ]
+    )
 
     await hass.config_entries.async_setup(config_entry.entry_id)
     assert config_entry.state is ConfigEntryState.LOADED

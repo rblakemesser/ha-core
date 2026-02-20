@@ -23,7 +23,8 @@ from tests.common import MockConfigEntry
 from tests.test_util.aiohttp import AiohttpClientMocker, AiohttpClientMockResponse
 
 HOST = "example.com"
-URL = "http://example.com/stick"
+BASE_URL = f"https://{HOST}"
+URL = f"{BASE_URL}/stick"
 PASSWORD = "password"
 SERIAL_NUMBER = 0x12635436566
 MAC_ADDRESS = "4C:A1:61:00:11:22"
@@ -86,7 +87,7 @@ CONFIG_ENTRY_DATA_OLD_FORMAT = {
     "serial_number": SERIAL_NUMBER,
 }
 CONFIG_ENTRY_DATA = {
-    "host": HOST,
+    "host": BASE_URL,
     "password": PASSWORD,
     "serial_number": SERIAL_NUMBER,
     "mac": MAC_ADDRESS,

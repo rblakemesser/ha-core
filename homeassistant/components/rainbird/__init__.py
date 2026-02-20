@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 import aiohttp
+from aiohttp.client_exceptions import ClientConnectionError
 from pyrainbird.async_client import AsyncRainbirdClient, AsyncRainbirdController
 from pyrainbird.exceptions import RainbirdApiException, RainbirdAuthException
 
@@ -47,6 +48,11 @@ PLATFORMS = [
 ]
 
 
+def _is_connection_error(err: RainbirdApiException) -> bool:
+    """Return True for transport-level connection failures."""
+    return isinstance(err.__cause__, ClientConnectionError)
+
+
 def _async_register_clientsession_shutdown(
     hass: HomeAssistant,
     entry: RainbirdConfigEntry,
@@ -77,13 +83,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: RainbirdConfigEntry) -> 
     clientsession = async_create_clientsession()
     _async_register_clientsession_shutdown(hass, entry, clientsession)
 
-    controller = AsyncRainbirdController(
-        AsyncRainbirdClient(
-            clientsession,
-            entry.data[CONF_HOST],
-            entry.data[CONF_PASSWORD],
+    raw_host = str(entry.data[CONF_HOST]).strip()
+    if "://" in raw_host:
+        candidates = [raw_host.rstrip("/")]
+    else:
+        raw_host = raw_host.rstrip("/")
+        candidates = [f"https://{raw_host}", f"http://{raw_host}"]
+
+    last_err: RainbirdApiException | None = None
+    controller: AsyncRainbirdController | None = None
+    model_info: Any = None
+    for idx, host in enumerate(candidates):
+        controller = AsyncRainbirdController(
+            AsyncRainbirdClient(
+                clientsession,
+                host,
+                entry.data[CONF_PASSWORD],
+            )
         )
-    )
+        try:
+            model_info = await controller.get_model_and_version()
+        except RainbirdAuthException as err:
+            raise ConfigEntryAuthFailed from err
+        except RainbirdApiException as err:
+            last_err = err
+            controller = None
+            model_info = None
+            if idx + 1 < len(candidates) and _is_connection_error(err):
+                continue
+            raise ConfigEntryNotReady from err
+        else:
+            if host != entry.data[CONF_HOST]:
+                hass.config_entries.async_update_entry(
+                    entry,
+                    data={**entry.data, CONF_HOST: host},
+                )
+            break
+
+    if controller is None:
+        raise ConfigEntryNotReady from last_err
 
     if not (await _async_fix_unique_id(hass, controller, entry)):
         return False
@@ -100,13 +138,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: RainbirdConfigEntry) -> 
             format_mac(mac_address),
             str(entry.data[CONF_SERIAL_NUMBER]),
         )
-
-    try:
-        model_info = await controller.get_model_and_version()
-    except RainbirdAuthException as err:
-        raise ConfigEntryAuthFailed from err
-    except RainbirdApiException as err:
-        raise ConfigEntryNotReady from err
 
     data = RainbirdData(
         controller,

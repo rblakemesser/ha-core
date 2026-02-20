@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import logging
 from typing import Any
 
+from aiohttp.client_exceptions import ClientConnectionError
 from pyrainbird.async_client import AsyncRainbirdClient, AsyncRainbirdController
 from pyrainbird.data import WifiParams
 from pyrainbird.exceptions import RainbirdApiException, RainbirdAuthException
@@ -29,6 +30,11 @@ from .const import (
 from .coordinator import async_create_clientsession
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _is_connection_error(err: RainbirdApiException) -> bool:
+    """Return True for transport-level connection failures."""
+    return isinstance(err.__cause__, ClientConnectionError)
 
 
 DATA_SCHEMA = vol.Schema(
@@ -106,7 +112,7 @@ class RainbirdConfigFlowHandler(ConfigFlow, domain=DOMAIN):
         error_code: str | None = None
         if user_input:
             try:
-                serial_number, wifi_params = await self._test_connection(
+                host, serial_number, wifi_params = await self._test_connection(
                     user_input[CONF_HOST], user_input[CONF_PASSWORD]
                 )
             except ConfigFlowError as err:
@@ -115,7 +121,7 @@ class RainbirdConfigFlowHandler(ConfigFlow, domain=DOMAIN):
             else:
                 return await self.async_finish(
                     data={
-                        CONF_HOST: user_input[CONF_HOST],
+                        CONF_HOST: host,
                         CONF_PASSWORD: user_input[CONF_PASSWORD],
                         CONF_SERIAL_NUMBER: serial_number,
                         CONF_MAC: wifi_params.mac_address,
@@ -131,42 +137,63 @@ class RainbirdConfigFlowHandler(ConfigFlow, domain=DOMAIN):
 
     async def _test_connection(
         self, host: str, password: str
-    ) -> tuple[str, WifiParams]:
+    ) -> tuple[str, int, WifiParams]:
         """Test the connection and return the device identifiers.
 
         Raises a ConfigFlowError on failure.
         """
-        clientsession = async_create_clientsession()
-        controller = AsyncRainbirdController(
-            AsyncRainbirdClient(
-                clientsession,
-                host,
-                password,
-            )
-        )
-        try:
-            async with asyncio.timeout(TIMEOUT_SECONDS):
-                return await asyncio.gather(
-                    controller.get_serial_number(),
-                    controller.get_wifi_params(),
+        host = host.strip()
+        if "://" in host:
+            candidates = [host.rstrip("/")]
+        else:
+            host = host.rstrip("/")
+            candidates = [f"https://{host}", f"http://{host}"]
+
+        last_err: Exception | None = None
+
+        for idx, candidate_host in enumerate(candidates):
+            clientsession = async_create_clientsession()
+            controller = AsyncRainbirdController(
+                AsyncRainbirdClient(
+                    clientsession,
+                    candidate_host,
+                    password,
                 )
-        except TimeoutError as err:
-            raise ConfigFlowError(
-                f"Timeout connecting to Rain Bird controller: {err!s}",
-                "timeout_connect",
-            ) from err
-        except RainbirdAuthException as err:
-            raise ConfigFlowError(
-                f"Authentication error connecting from Rain Bird controller: {err!s}",
-                "invalid_auth",
-            ) from err
-        except RainbirdApiException as err:
-            raise ConfigFlowError(
-                f"Error connecting to Rain Bird controller: {err!s}",
-                "cannot_connect",
-            ) from err
-        finally:
-            await clientsession.close()
+            )
+            try:
+                async with asyncio.timeout(TIMEOUT_SECONDS):
+                    serial_number = await controller.get_serial_number()
+                async with asyncio.timeout(TIMEOUT_SECONDS):
+                    wifi_params = await controller.get_wifi_params()
+                return candidate_host, serial_number, wifi_params
+            except TimeoutError as err:
+                last_err = err
+                if idx + 1 < len(candidates):
+                    continue
+                raise ConfigFlowError(
+                    f"Timeout connecting to Rain Bird controller: {err!s}",
+                    "timeout_connect",
+                ) from err
+            except RainbirdAuthException as err:
+                raise ConfigFlowError(
+                    f"Authentication error connecting to Rain Bird controller: {err!s}",
+                    "invalid_auth",
+                ) from err
+            except RainbirdApiException as err:
+                last_err = err
+                if idx + 1 < len(candidates) and _is_connection_error(err):
+                    continue
+                raise ConfigFlowError(
+                    f"Error connecting to Rain Bird controller: {err!s}",
+                    "cannot_connect",
+                ) from err
+            finally:
+                await clientsession.close()
+
+        raise ConfigFlowError(
+            f"Error connecting to Rain Bird controller: {last_err!s}",
+            "cannot_connect",
+        ) from last_err
 
     async def async_finish(
         self,

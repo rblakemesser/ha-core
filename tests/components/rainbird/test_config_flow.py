@@ -18,6 +18,7 @@ from homeassistant.data_entry_flow import FlowResult, FlowResultType
 from .conftest import (
     CONFIG_ENTRY_DATA,
     HOST,
+    BASE_URL,
     MAC_ADDRESS_UNIQUE_ID,
     PASSWORD,
     SERIAL_NUMBER,
@@ -68,7 +69,7 @@ async def complete_flow(hass: HomeAssistant, password: str = PASSWORD) -> FlowRe
 
     return await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {CONF_HOST: HOST, CONF_PASSWORD: PASSWORD},
+        {CONF_HOST: HOST, CONF_PASSWORD: password},
     )
 
 
@@ -103,7 +104,7 @@ async def test_controller_flow(
 
     result = await complete_flow(hass)
     assert result.get("type") is FlowResultType.CREATE_ENTRY
-    assert result.get("title") == HOST
+    assert result.get("title") == BASE_URL
     assert "result" in result
     assert dict(result["result"].data) == expected_config_entry
     assert result["result"].options == {ATTR_DURATION: 6}
@@ -281,7 +282,6 @@ async def test_controller_invalid_auth(
         [
             # Incorrect password response
             AiohttpClientMockResponse("POST", URL, status=HTTPStatus.FORBIDDEN),
-            AiohttpClientMockResponse("POST", URL, status=HTTPStatus.FORBIDDEN),
             # Second attempt with the correct password
             mock_response(SERIAL_RESPONSE),
             mock_json_response(WIFI_PARAMS_RESPONSE),
@@ -313,7 +313,7 @@ async def test_controller_invalid_auth(
         {CONF_HOST: HOST, CONF_PASSWORD: PASSWORD},
     )
     assert result.get("type") is FlowResultType.CREATE_ENTRY
-    assert result.get("title") == HOST
+    assert result.get("title") == BASE_URL
     assert "result" in result
     assert dict(result["result"].data) == CONFIG_ENTRY_DATA
     assert result["result"].unique_id == MAC_ADDRESS_UNIQUE_ID
@@ -345,7 +345,6 @@ async def test_controller_timeout(
         (
             [
                 # First attempt simulate the wrong password
-                AiohttpClientMockResponse("POST", URL, status=HTTPStatus.FORBIDDEN),
                 AiohttpClientMockResponse("POST", URL, status=HTTPStatus.FORBIDDEN),
                 # Second attempt simulate the correct password
                 mock_response(SERIAL_RESPONSE),
@@ -406,7 +405,7 @@ async def test_options_flow(hass: HomeAssistant, mock_setup: Mock) -> None:
     # Setup config flow
     result = await complete_flow(hass)
     assert result.get("type") is FlowResultType.CREATE_ENTRY
-    assert result.get("title") == HOST
+    assert result.get("title") == BASE_URL
     assert "result" in result
     assert result["result"].data == CONFIG_ENTRY_DATA
     assert result["result"].options == {ATTR_DURATION: 6}
